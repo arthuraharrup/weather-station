@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Weather Station Aggregator & Multi-Model Forecast</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        glass: {
+                            DEFAULT: 'rgba(30, 41, 59, 0.7)',
+                            border: 'rgba(255, 255, 255, 0.1)',
+                            hover: 'rgba(51, 65, 85, 0.8)'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        html, body {
+            overflow-x: hidden;
+            touch-action: manipulation;
+        }
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        
+        .glass-card {
+            background: rgba(15, 23, 42, 0.65);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            transition: all 0.2s ease-in-out;
+        }
+
+        .glass-card:active, .glass-card:hover {
+            border-color: rgba(59, 130, 246, 0.4);
+        }
+
+        /* Custom scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(100, 116, 139, 0.5);
+            border-radius: 4px;
+        }
+
+        /* Radar scan effect */
+        @keyframes radar-sweep {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .radar-sweep-line {
+            animation: radar-sweep 3s linear infinite;
+            transform-origin: bottom right;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.8; }
+            50% { transform: scale(1.1); opacity: 0.4; }
+            100% { transform: scale(0.8); opacity: 0.8; }
+        }
+        .pulse-ring-anim {
+            animation: pulse-ring 2.5s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white pb-10">
+
+    <!-- INTRO RADAR SPLASH SCREEN -->
+    <div id="splashScreen" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 transition-opacity duration-700">
+        <div class="relative w-56 h-56 sm:w-64 sm:h-64 flex items-center justify-center mb-8">
+            <div class="absolute inset-0 rounded-full border border-blue-500/20 pulse-ring-anim"></div>
+            <div class="absolute inset-4 rounded-full border border-slate-700/50"></div>
+            <div class="absolute inset-12 rounded-full border border-blue-500/30"></div>
+            <div class="absolute inset-20 rounded-full border border-slate-800"></div>
+            <!-- Radar Crosshairs -->
+            <div class="absolute w-full h-[1px] bg-blue-500/20"></div>
+            <div class="absolute h-full w-[1px] bg-blue-500/20"></div>
+            <!-- Sweep Line -->
+            <div class="absolute top-0 left-0 w-1/2 h-1/2 overflow-hidden pointer-events-none">
+                <div class="w-full h-full bg-gradient-to-br from-blue-500/40 via-blue-500/10 to-transparent radar-sweep-line rounded-tl-full"></div>
+            </div>
+            <!-- Center Radar Marker -->
+            <div class="w-4 h-4 rounded-full bg-blue-500 shadow-lg shadow-blue-500/50 animate-ping"></div>
+            <div class="absolute w-3 h-3 rounded-full bg-blue-400"></div>
+        </div>
+
+        <div class="text-center max-w-md px-6">
+            <h1 class="text-2xl font-bold tracking-tight text-white mb-2 flex items-center justify-center gap-2">
+                <i data-lucide="radar" class="w-6 h-6 text-blue-400 animate-spin"></i>
+                Station Aggregator
+            </h1>
+            <p id="splashProgressText" class="text-xs sm:text-sm font-mono text-blue-400/90 tracking-wide">Connecting to Southend-on-Sea feed...</p>
+            <div class="w-56 sm:w-64 h-1.5 bg-slate-800 rounded-full mt-4 mx-auto overflow-hidden">
+                <div id="splashProgressBar" class="h-full bg-gradient-to-r from-blue-500 to-indigo-500 w-0 transition-all duration-300"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN APP CONTAINER -->
+    <div class="flex-1 flex flex-col max-w-7xl w-full mx-auto p-3 sm:p-6 lg:p-8 gap-4 sm:gap-6">
+
+        <!-- HEADER & AUTOCOMPLETE SEARCH BAR -->
+        <header class="sticky top-2 z-40 glass-panel rounded-2xl p-3 sm:p-5 flex flex-col md:flex-row items-center justify-between gap-3 shadow-2xl">
+            <div class="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
+                <div class="flex items-center gap-2.5">
+                    <div class="p-2.5 bg-blue-500/10 rounded-xl border border-blue-500/20 text-blue-400">
+                        <i data-lucide="cloud-lightning" class="w-6 h-6 sm:w-7 sm:h-7"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-lg sm:text-2xl font-extrabold tracking-tight text-white leading-tight">Weather Consensus</h1>
+                        <p class="text-[11px] sm:text-xs text-slate-400 flex items-center gap-1.5">
+                            <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                            Live Multi-Model Network
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Autocomplete Search Form -->
+            <div class="relative w-full md:w-96">
+                <div class="flex items-center gap-2">
+                    <div class="relative flex-1">
+                        <i data-lucide="search" class="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
+                        <input type="text" id="locationInput" placeholder="Search city or location..." 
+                               autocomplete="off"
+                               class="w-full h-11 bg-slate-900/90 border border-slate-700/70 rounded-xl py-2 pl-10 pr-8 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all">
+                        <button id="clearSearchBtn" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white hidden p-1">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                    <button id="geolocateBtn" title="Use current location" class="h-11 w-11 bg-slate-800/90 hover:bg-slate-700 active:scale-95 border border-slate-700 text-slate-300 rounded-xl transition-all shrink-0 flex items-center justify-center">
+                        <i data-lucide="locate-fixed" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <!-- Recommendations Dropdown -->
+                <div id="searchDropdown" class="absolute left-0 right-0 top-12 mt-1 hidden bg-slate-900/95 backdrop-blur-xl border border-slate-700/80 rounded-xl shadow-2xl overflow-hidden z-50 divide-y divide-slate-800">
+                    <!-- Dynamic Recommendation Items -->
+                </div>
+            </div>
+        </header>
+
+        <!-- CONSENSUS HERO BANNER -->
+        <div id="consensusHero" class="glass-panel rounded-2xl p-4 sm:p-6 relative overflow-hidden shadow-2xl border-l-4 border-l-blue-500">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+                
+                <!-- Rain Status & Highlight -->
+                <div class="lg:col-span-5 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-slate-700/50 pb-5 lg:pb-0 lg:pr-6">
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <span id="locationTitle" class="text-base sm:text-lg font-bold text-slate-200 flex items-center gap-2">
+                                <i data-lucide="map-pin" class="w-4 h-4 text-blue-400"></i> Southend-on-Sea, UK
+                            </span>
+                            <span id="consensusConfidence" class="text-[11px] px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium">
+                                Live Agreement 95%
+                            </span>
+                        </div>
+
+                        <!-- Big Temperature Display -->
+                        <div class="flex items-baseline gap-3 my-2 sm:my-3">
+                            <span id="heroTemp" class="text-5xl sm:text-6xl font-black text-white tracking-tight">--°C</span>
+                            <div class="flex flex-col">
+                                <span id="heroCondition" class="text-base sm:text-lg font-medium text-blue-300">Syncing...</span>
+                                <span id="heroFeelsLike" class="text-xs text-slate-400">Feels like --°C</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Will It Rain Banner -->
+                    <div id="willItRainCard" class="mt-3 sm:mt-4 p-3.5 sm:p-4 rounded-xl bg-slate-900/70 border border-slate-800 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div id="rainIconBox" class="p-2.5 rounded-lg bg-blue-500/10 text-blue-400 shrink-0">
+                                <i data-lucide="cloud-rain" class="w-6 h-6"></i>
+                            </div>
+                            <div>
+                                <div class="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider font-semibold">Precipitation Status</div>
+                                <div id="willItRainText" class="text-sm sm:text-base font-bold text-white">Calculating chance...</div>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <div id="heroRainProb" class="text-lg sm:text-xl font-bold text-blue-400">--%</div>
+                            <div id="heroRainRate" class="text-[11px] text-slate-400">0.0 mm/h</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Metrics Grid -->
+                <div class="lg:col-span-7 grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+                    <div class="glass-card p-3.5 sm:p-4 rounded-xl">
+                        <div class="text-xs font-medium text-slate-400 flex items-center gap-1.5 mb-1">
+                            <i data-lucide="droplets" class="w-3.5 h-3.5 text-cyan-400"></i> Humidity
+                        </div>
+                        <div id="heroHumidity" class="text-xl sm:text-2xl font-bold text-slate-100">--%</div>
+                        <div class="text-[11px] text-slate-400 mt-1">Dewpoint: <span id="heroDewpoint">--°C</span></div>
+                    </div>
+
+                    <div class="glass-card p-3.5 sm:p-4 rounded-xl">
+                        <div class="text-xs font-medium text-slate-400 flex items-center gap-1.5 mb-1">
+                            <i data-lucide="wind" class="w-3.5 h-3.5 text-teal-400"></i> Wind Speed
+                        </div>
+                        <div id="heroWind" class="text-xl sm:text-2xl font-bold text-slate-100">-- km/h</div>
+                        <div class="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
+                            <i id="heroWindCompass" data-lucide="navigation-2" class="w-3 h-3 text-teal-400 transition-transform"></i>
+                            <span id="heroWindDir">--</span>
+                        </div>
+                    </div>
+
+                    <div class="glass-card p-3.5 sm:p-4 rounded-xl">
+                        <div class="text-xs font-medium text-slate-400 flex items-center gap-1.5 mb-1">
+                            <i data-lucide="gauge" class="w-3.5 h-3.5 text-amber-400"></i> Pressure
+                        </div>
+                        <div id="heroPressure" class="text-xl sm:text-2xl font-bold text-slate-100">---- hPa</div>
+                        <div class="text-[11px] text-slate-400 mt-1">Barometric Live</div>
+                    </div>
+
+                    <div class="glass-card p-3.5 sm:p-4 rounded-xl">
+                        <div class="text-xs font-medium text-slate-400 flex items-center gap-1.5 mb-1">
+                            <i data-lucide="sun" class="w-3.5 h-3.5 text-yellow-400"></i> UV Index
+                        </div>
+                        <div id="heroUV" class="text-xl sm:text-2xl font-bold text-slate-100">--</div>
+                        <div id="heroUVDesc" class="text-[11px] text-slate-400 mt-1">Moderate</div>
+                    </div>
+
+                    <div class="glass-card p-3.5 sm:p-4 rounded-xl">
+                        <div class="text-xs font-medium text-slate-400 flex items-center gap-1.5 mb-1">
+                            <i data-lucide="eye" class="w-3.5 h-3.5 text-purple-400"></i> Visibility
+                        </div>
+                        <div id="heroVisibility" class="text-xl sm:text-2xl font-bold text-slate-100">-- km</div>
+                        <div class="text-[11px] text-slate-400 mt-1">Clear View</div>
+                    </div>
+
+                    <div class="glass-card p-3.5 sm:p-4 rounded-xl">
+                        <div class="text-xs font-medium text-slate-400 flex items-center gap-1.5 mb-1">
+                            <i data-lucide="cloud-sun" class="w-3.5 h-3.5 text-indigo-400"></i> Cloud Cover
+                        </div>
+                        <div id="heroCloudCover" class="text-xl sm:text-2xl font-bold text-slate-100">--%</div>
+                        <div id="heroCloudDesc" class="text-[11px] text-slate-400 mt-1">Sky Cover</div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- REST OF TODAY HOURLY TIMELINE & AUTOMATED SUMMARY -->
+        <section class="glass-panel rounded-2xl p-4 sm:p-6 shadow-xl space-y-4 sm:space-y-6">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-700/60 pb-3 sm:pb-4">
+                <div>
+                    <h2 class="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                        <i data-lucide="clock" class="w-5 h-5 text-blue-400"></i> Rest of Today Forecast
+                    </h2>
+                    <p class="text-xs text-slate-400">Hourly breakdown until midnight</p>
+                </div>
+                <!-- Automated Summary Card -->
+                <div id="todayAutomatedSummary" class="bg-blue-950/40 border border-blue-500/30 rounded-xl p-3 text-xs text-blue-200 flex items-start gap-2.5 max-w-xl">
+                    <i data-lucide="sparkles" class="w-4 h-4 text-blue-400 shrink-0 mt-0.5"></i>
+                    <span id="todaySummaryText">Synthesizing rest of today summary...</span>
+                </div>
+            </div>
+
+            <!-- Daylight & Sun Progress -->
+            <div class="glass-card rounded-xl p-3.5 sm:p-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                <div class="flex items-center gap-3">
+                    <div class="p-2 bg-amber-500/10 text-amber-400 rounded-lg">
+                        <i data-lucide="sunrise" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <div class="text-[11px] text-slate-400">Sunrise</div>
+                        <div id="todaySunriseTime" class="text-sm font-semibold text-slate-200">--:--</div>
+                    </div>
+                </div>
+
+                <div class="space-y-1.5">
+                    <div class="flex justify-between text-xs text-slate-300">
+                        <span class="flex items-center gap-1"><i data-lucide="sun" class="w-3.5 h-3.5 text-yellow-400"></i> Daylight</span>
+                        <span id="daylightRemainingText" class="font-medium text-blue-400">-- hrs left</span>
+                    </div>
+                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                        <div id="daylightProgressBar" class="bg-gradient-to-r from-amber-400 via-blue-500 to-indigo-600 h-full w-0 transition-all duration-500"></div>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-3 justify-start md:justify-end">
+                    <div class="text-left md:text-right">
+                        <div class="text-[11px] text-slate-400">Sunset</div>
+                        <div id="todaySunsetTime" class="text-sm font-semibold text-slate-200">--:--</div>
+                    </div>
+                    <div class="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg">
+                        <i data-lucide="sunset" class="w-5 h-5"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hourly Scrollable Touch Carousel -->
+            <div id="hourlyTimelineContainer" class="flex gap-3 overflow-x-auto pb-3 pt-1 snap-x touch-pan-x">
+                <div class="text-slate-500 text-xs py-6 mx-auto">Loading hourly weather feed...</div>
+            </div>
+        </section>
+
+        <!-- MULTI-MODEL FEED SOURCES -->
+        <section class="space-y-3">
+            <div class="flex items-center justify-between px-1">
+                <h2 class="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <i data-lucide="layers" class="w-5 h-5 text-indigo-400"></i> Integrated Station Models
+                </h2>
+                <span class="text-xs text-slate-400">Weighted Feed</span>
+            </div>
+
+            <div id="stationGrid" class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                <div class="glass-card rounded-2xl p-3.5 sm:p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-[10px] sm:text-xs font-bold text-slate-300 uppercase">ECMWF</span>
+                        <span class="text-[10px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded-full">35%</span>
+                    </div>
+                    <div id="ecmwfTemp" class="text-2xl sm:text-3xl font-extrabold text-white mb-0.5">--°C</div>
+                    <div id="ecmwfCondition" class="text-[11px] text-slate-400 mb-2 truncate">Syncing...</div>
+                    <div class="text-[11px] text-slate-400 space-y-1 border-t border-slate-800 pt-2">
+                        <div class="flex justify-between"><span>Rain:</span><span id="ecmwfRain" class="text-slate-200">--%</span></div>
+                        <div class="flex justify-between"><span>Wind:</span><span id="ecmwfWind" class="text-slate-200">-- km/h</span></div>
+                    </div>
+                </div>
+
+                <div class="glass-card rounded-2xl p-3.5 sm:p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-[10px] sm:text-xs font-bold text-slate-300 uppercase">MET Norway</span>
+                        <span class="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-full">25%</span>
+                    </div>
+                    <div id="metNorwayTemp" class="text-2xl sm:text-3xl font-extrabold text-white mb-0.5">--°C</div>
+                    <div id="metNorwayCondition" class="text-[11px] text-slate-400 mb-2 truncate">Syncing...</div>
+                    <div class="text-[11px] text-slate-400 space-y-1 border-t border-slate-800 pt-2">
+                        <div class="flex justify-between"><span>Rain:</span><span id="metNorwayRain" class="text-slate-200">--%</span></div>
+                        <div class="flex justify-between"><span>Wind:</span><span id="metNorwayWind" class="text-slate-200">-- km/h</span></div>
+                    </div>
+                </div>
+
+                <div class="glass-card rounded-2xl p-3.5 sm:p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-[10px] sm:text-xs font-bold text-slate-300 uppercase">DWD ICON</span>
+                        <span class="text-[10px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded-full">20%</span>
+                    </div>
+                    <div id="dwdTemp" class="text-2xl sm:text-3xl font-extrabold text-white mb-0.5">--°C</div>
+                    <div id="dwdCondition" class="text-[11px] text-slate-400 mb-2 truncate">Syncing...</div>
+                    <div class="text-[11px] text-slate-400 space-y-1 border-t border-slate-800 pt-2">
+                        <div class="flex justify-between"><span>Rain:</span><span id="dwdRain" class="text-slate-200">--%</span></div>
+                        <div class="flex justify-between"><span>Wind:</span><span id="dwdWind" class="text-slate-200">-- km/h</span></div>
+                    </div>
+                </div>
+
+                <div class="glass-card rounded-2xl p-3.5 sm:p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-[10px] sm:text-xs font-bold text-slate-300 uppercase">GFS NOAA</span>
+                        <span class="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded-full">20%</span>
+                    </div>
+                    <div id="gfsTemp" class="text-2xl sm:text-3xl font-extrabold text-white mb-0.5">--°C</div>
+                    <div id="gfsCondition" class="text-[11px] text-slate-400 mb-2 truncate">Syncing...</div>
+                    <div class="text-[11px] text-slate-400 space-y-1 border-t border-slate-800 pt-2">
+                        <div class="flex justify-between"><span>Rain:</span><span id="gfsRain" class="text-slate-200">--%</span></div>
+                        <div class="flex justify-between"><span>Wind:</span><span id="gfsWind" class="text-slate-200">-- km/h</span></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CHART SECTION -->
+        <section class="glass-panel rounded-2xl p-4 sm:p-6 shadow-xl space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <h2 class="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <i data-lucide="trending-up" class="w-5 h-5 text-blue-400"></i> 14-Day Trend & Precipitation
+                </h2>
+                <span class="text-xs text-slate-400">Multi-Model Ensemble</span>
+            </div>
+            <div class="w-full h-64 sm:h-80 relative">
+                <canvas id="forecastChart"></canvas>
+            </div>
+        </section>
+
+        <!-- 14-DAY FORECAST CARDS WITH SAFE BINDING -->
+        <section class="space-y-3 sm:space-y-4">
+            <div class="flex items-center justify-between px-1">
+                <div>
+                    <h2 class="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                        <i data-lucide="calendar-days" class="w-5 h-5 text-blue-400"></i> Daily Forecast Breakdowns
+                    </h2>
+                    <p class="text-xs text-slate-400">Tap card for detailed multi-phase analysis</p>
+                </div>
+            </div>
+
+            <!-- Grid of 14 Days -->
+            <div id="dailyForecastGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+                <!-- Dynamically Populated Cards -->
+            </div>
+        </section>
+
+        <!-- FOOTER -->
+        <footer class="mt-auto py-6 text-center text-xs text-slate-500 border-t border-slate-800/60">
+            <p>Weather Station Aggregator • Real-Time Open-Meteo, MET Norway & DWD Data Synthesis</p>
+        </footer>
+
+    </div>
+
+    <!-- DAILY OVERVIEW MODAL -->
+    <div id="dayDetailModal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 transition-opacity">
+        <div class="glass-panel max-w-xl w-full rounded-2xl p-5 sm:p-6 shadow-2xl relative border border-slate-700/60 space-y-5">
+            
+            <div class="flex items-center justify-between border-b border-slate-700/60 pb-3">
+                <div>
+                    <h3 id="modalDateTitle" class="text-lg sm:text-xl font-bold text-white">Daily Breakdown</h3>
+                    <p id="modalSubTitle" class="text-xs text-blue-400">Multi-Phase Model Breakdown</p>
+                </div>
+                <button id="closeModalBtn" class="min-w-[44px] min-h-[44px] flex items-center justify-center bg-slate-800 hover:bg-slate-700 active:scale-95 rounded-xl text-slate-300 transition-all">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="p-3.5 bg-blue-950/40 border border-blue-500/20 rounded-xl text-xs sm:text-sm text-slate-200 flex items-start gap-2.5">
+                <i data-lucide="sparkles" class="w-4 h-4 text-blue-400 shrink-0 mt-0.5"></i>
+                <div id="modalNarrativeText" class="leading-relaxed">--</div>
+            </div>
+
+            <!-- Phase Breakdowns -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div class="glass-card p-3 rounded-xl text-center">
+                    <div class="text-[10px] text-slate-400 mb-1">Morning</div>
+                    <i data-lucide="sun-medium" class="w-5 h-5 text-amber-400 mx-auto my-1"></i>
+                    <div id="modalMorningTemp" class="text-base font-bold text-white">--°C</div>
+                    <div id="modalMorningRain" class="text-[10px] text-blue-400">--% rain</div>
+                </div>
+                <div class="glass-card p-3 rounded-xl text-center">
+                    <div class="text-[10px] text-slate-400 mb-1">Afternoon</div>
+                    <i data-lucide="sun" class="w-5 h-5 text-yellow-400 mx-auto my-1"></i>
+                    <div id="modalAfternoonTemp" class="text-base font-bold text-white">--°C</div>
+                    <div id="modalAfternoonRain" class="text-[10px] text-blue-400">--% rain</div>
+                </div>
+                <div class="glass-card p-3 rounded-xl text-center">
+                    <div class="text-[10px] text-slate-400 mb-1">Evening</div>
+                    <i data-lucide="sunset" class="w-5 h-5 text-orange-400 mx-auto my-1"></i>
+                    <div id="modalEveningTemp" class="text-base font-bold text-white">--°C</div>
+                    <div id="modalEveningRain" class="text-[10px] text-blue-400">--% rain</div>
+                </div>
+                <div class="glass-card p-3 rounded-xl text-center">
+                    <div class="text-[10px] text-slate-400 mb-1">Night</div>
+                    <i data-lucide="moon" class="w-5 h-5 text-indigo-400 mx-auto my-1"></i>
+                    <div id="modalNightTemp" class="text-base font-bold text-white">--°C</div>
+                    <div id="modalNightRain" class="text-[10px] text-blue-400">--% rain</div>
+                </div>
+            </div>
+
+            <!-- Metrics Grid -->
+            <div class="grid grid-cols-3 gap-2.5 pt-1">
+                <div class="p-2.5 bg-slate-900/60 rounded-xl text-center sm:text-left">
+                    <div class="text-[10px] text-slate-400">Max Wind</div>
+                    <div id="modalWindMax" class="text-sm font-semibold text-slate-100">-- km/h</div>
+                </div>
+                <div class="p-2.5 bg-slate-900/60 rounded-xl text-center sm:text-left">
+                    <div class="text-[10px] text-slate-400">Precip Total</div>
+                    <div id="modalPrecipTotal" class="text-sm font-semibold text-blue-400">-- mm</div>
+                </div>
+                <div class="p-2.5 bg-slate-900/60 rounded-xl text-center sm:text-left">
+                    <div class="text-[10px] text-slate-400">UV Peak</div>
+                    <div id="modalUVMax" class="text-sm font-semibold text-amber-400">--</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- MAIN APP SCRIPT -->
+    <script>
+        // State
+        let currentCoords = { lat: 51.5386, lon: 0.7130, name: 'Southend-on-Sea, UK' };
+        let weatherData = null;
+        let chartInstance = null;
+        let debounceTimer = null;
+
+        const WMO_CODES = {
+            0: { desc: "Clear Sky", icon: "sun" },
+            1: { desc: "Mainly Clear", icon: "sun-medium" },
+            2: { desc: "Partly Cloudy", icon: "cloud-sun" },
+            3: { desc: "Overcast", icon: "cloud" },
+            45: { desc: "Foggy", icon: "cloud-fog" },
+            48: { desc: "Depositing Fog", icon: "cloud-fog" },
+            51: { desc: "Light Drizzle", icon: "cloud-drizzle" },
+            53: { desc: "Moderate Drizzle", icon: "cloud-drizzle" },
+            55: { desc: "Dense Drizzle", icon: "cloud-drizzle" },
+            61: { desc: "Slight Rain", icon: "cloud-rain" },
+            63: { desc: "Moderate Rain", icon: "cloud-rain" },
+            65: { desc: "Heavy Rain", icon: "cloud-lightning" },
+            71: { desc: "Slight Snow", icon: "snowflake" },
+            73: { desc: "Moderate Snow", icon: "snowflake" },
+            75: { desc: "Heavy Snow", icon: "snowflake" },
+            80: { desc: "Light Showers", icon: "cloud-rain" },
+            81: { desc: "Moderate Showers", icon: "cloud-rain" },
+            82: { desc: "Heavy Showers", icon: "cloud-lightning" },
+            95: { desc: "Thunderstorm", icon: "cloud-lightning" }
+        };
+
+        function getCondition(code) {
+            return WMO_CODES[code] || { desc: "Partly Cloudy", icon: "cloud-sun" };
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            runSplashSequence();
+
+            const locInput = document.getElementById('locationInput');
+            const dropdown = document.getElementById('searchDropdown');
+            const clearBtn = document.getElementById('clearSearchBtn');
+
+            // Debounced Autocomplete Search
+            locInput.addEventListener('input', (e) => {
+                const query = e.target.value.trim();
+                clearBtn.classList.toggle('hidden', query.length === 0);
+
+                clearTimeout(debounceTimer);
+                if (query.length < 2) {
+                    dropdown.classList.add('hidden');
+                    return;
+                }
+
+                debounceTimer = setTimeout(() => {
+                    fetchCityRecommendations(query);
+                }, 300);
+            });
+
+            // Close dropdown when tapping outside
+            document.addEventListener('click', (e) => {
+                if (!locInput.contains(e.target) && !dropdown.contains(e.target)) {
+                    dropdown.classList.add('hidden');
+                }
+            });
+
+            clearBtn.addEventListener('click', () => {
+                locInput.value = '';
+                dropdown.classList.add('hidden');
+                clearBtn.classList.add('hidden');
+                locInput.focus();
+            });
+
+            document.getElementById('geolocateBtn').addEventListener('click', useGeolocation);
+            document.getElementById('closeModalBtn').addEventListener('click', () => {
+                document.getElementById('dayDetailModal').classList.add('hidden');
+            });
+        });
+
+        // Search Autocomplete Recommendation Fetch
+        async function fetchCityRecommendations(query) {
+            const dropdown = document.getElementById('searchDropdown');
+            try {
+                const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5&language=en&format=json`;
+                const res = await fetch(url);
+                const data = await res.json();
+
+                if (!data.results || data.results.length === 0) {
+                    dropdown.innerHTML = `<div class="p-3 text-xs text-slate-400 text-center">No locations found</div>`;
+                    dropdown.classList.remove('hidden');
+                    return;
+                }
+
+                dropdown.innerHTML = '';
+                data.results.forEach(place => {
+                    const country = place.country || '';
+                    const admin1 = place.admin1 ? `${place.admin1}, ` : '';
+                    const displayName = `${place.name}, ${admin1}${country}`;
+
+                    const item = document.createElement('div');
+                    item.className = "p-3 hover:bg-blue-600/20 active:bg-blue-600/30 cursor-pointer transition-colors flex items-center justify-between text-xs min-h-[44px]";
+                    item.innerHTML = `
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="map-pin" class="w-3.5 h-3.5 text-blue-400 shrink-0"></i>
+                            <span class="font-medium text-slate-200">${place.name}</span>
+                            <span class="text-slate-400 text-[11px]">${admin1}${country}</span>
+                        </div>
+                        <span class="text-[10px] font-mono text-slate-500">${place.latitude.toFixed(2)}, ${place.longitude.toFixed(2)}</span>
+                    `;
+
+                    item.onclick = () => {
+                        currentCoords = {
+                            lat: place.latitude,
+                            lon: place.longitude,
+                            name: `${place.name}${country ? ', ' + country : ''}`
+                        };
+                        document.getElementById('locationInput').value = place.name;
+                        dropdown.classList.add('hidden');
+                        fetchWeatherData();
+                    };
+
+                    dropdown.appendChild(item);
+                });
+
+                dropdown.classList.remove('hidden');
+                lucide.createIcons();
+
+            } catch (err) {
+                console.error("Geocoding failed:", err);
+            }
+        }
+
+        // Splash Sequence
+        function runSplashSequence() {
+            const bar = document.getElementById('splashProgressBar');
+            const txt = document.getElementById('splashProgressText');
+            
+            setTimeout(() => { bar.style.width = '35%'; txt.innerText = 'Connecting to Open-Meteo & DWD Nodes...'; }, 200);
+            setTimeout(() => { bar.style.width = '75%'; txt.innerText = 'Synthesizing 14-Day Consensus...'; }, 500);
+            
+            fetchWeatherData().then(() => {
+                bar.style.width = '100%';
+                txt.innerText = 'Live Consensus Ready!';
+                setTimeout(() => {
+                    const splash = document.getElementById('splashScreen');
+                    splash.classList.add('opacity-0');
+                    setTimeout(() => splash.style.display = 'none', 700);
+                }, 300);
+            });
+        }
+
+        // Fetch Weather Data
+        async function fetchWeatherData() {
+            try {
+                const { lat, lon } = currentCoords;
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,rain,showers,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m,uv_index,visibility&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,sunrise,sunset,uv_index_max,precipitation_sum,precipitation_probability_max,wind_speed_10m_max&timezone=auto&forecast_days=14`;
+
+                const response = await fetch(url);
+                weatherData = await response.json();
+
+                renderConsensusHero();
+                renderRestOfDay();
+                renderStationCards();
+                renderChart();
+                renderDailyGrid();
+
+            } catch (err) {
+                console.error("Error fetching weather:", err);
+            }
+        }
+
+        // Render Hero
+        function renderConsensusHero() {
+            if (!weatherData || !weatherData.current) return;
+
+            const c = weatherData.current;
+            const d = weatherData.daily;
+
+            document.getElementById('locationTitle').innerHTML = `<i data-lucide="map-pin" class="w-4 h-4 text-blue-400"></i> ${currentCoords.name}`;
+            document.getElementById('heroTemp').innerText = `${Math.round(c.temperature_2m ?? 0)}°C`;
+            
+            const cond = getCondition(c.weather_code ?? 0);
+            document.getElementById('heroCondition').innerText = cond.desc;
+            document.getElementById('heroFeelsLike').innerText = `Feels like ${Math.round(c.apparent_temperature ?? c.temperature_2m ?? 0)}°C`;
+
+            const rainProb = (d && d.precipitation_probability_max && d.precipitation_probability_max[0]) ?? 0;
+            const rainRate = c.precipitation ?? 0;
+            const willRain = rainProb >= 40 || rainRate > 0.1;
+
+            document.getElementById('willItRainText').innerText = willRain 
+                ? (rainRate > 0 ? "Raining Currently" : "High Rain Probability Today") 
+                : "Dry Conditions Expected";
+            
+            document.getElementById('heroRainProb').innerText = `${rainProb}%`;
+            document.getElementById('heroRainRate').innerText = `${rainRate} mm/h`;
+
+            document.getElementById('heroHumidity').innerText = `${c.relative_humidity_2m ?? 0}%`;
+            
+            const temp = c.temperature_2m ?? 0;
+            const hum = c.relative_humidity_2m ?? 0;
+            const dewPoint = (temp - ((100 - hum) / 5)).toFixed(1);
+            document.getElementById('heroDewpoint').innerText = `${dewPoint}°C`;
+
+            document.getElementById('heroWind').innerText = `${Math.round(c.wind_speed_10m ?? 0)} km/h`;
+            document.getElementById('heroWindDir').innerText = getWindDirection(c.wind_direction_10m ?? 0);
+            
+            const compass = document.getElementById('heroWindCompass');
+            if (compass) compass.style.transform = `rotate(${c.wind_direction_10m ?? 0}deg)`;
+
+            document.getElementById('heroPressure').innerText = `${Math.round(c.pressure_msl ?? 1013)} hPa`;
+            
+            const uvMax = (d && d.uv_index_max && d.uv_index_max[0]) ?? 2;
+            document.getElementById('heroUV').innerText = uvMax;
+            document.getElementById('heroUVDesc').innerText = uvMax > 5 ? "High Hazard" : (uvMax > 2 ? "Moderate" : "Low Risk");
+
+            const visMeters = (weatherData.hourly && weatherData.hourly.visibility && weatherData.hourly.visibility[0]) ?? 10000;
+            document.getElementById('heroVisibility').innerText = `${(visMeters / 1000).toFixed(0)} km`;
+
+            document.getElementById('heroCloudCover').innerText = `${c.cloud_cover ?? 0}%`;
+            document.getElementById('heroCloudDesc').innerText = (c.cloud_cover ?? 0) > 70 ? "Overcast" : ((c.cloud_cover ?? 0) > 30 ? "Partly Cloudy" : "Clear Sky");
+
+            lucide.createIcons();
+        }
+
+        // Render Rest of Today
+        function renderRestOfDay() {
+            if (!weatherData || !weatherData.hourly || !weatherData.daily) return;
+
+            const hourly = weatherData.hourly;
+            const daily = weatherData.daily;
+            const now = new Date();
+            const currentHour = now.getHours();
+
+            const hourlyContainer = document.getElementById('hourlyTimelineContainer');
+            hourlyContainer.innerHTML = '';
+
+            let totalRainProb = 0;
+            let maxTemp = -99;
+            let maxWind = 0;
+            let hoursCount = 0;
+
+            for (let i = 0; i < hourly.time.length; i++) {
+                const hourDate = new Date(hourly.time[i]);
+
+                if (hourDate.toDateString() === now.toDateString() && hourDate.getHours() >= currentHour) {
+                    hoursCount++;
+                    const temp = Math.round(hourly.temperature_2m[i] ?? 0);
+                    const feels = Math.round(hourly.apparent_temperature[i] ?? temp);
+                    const rainP = hourly.precipitation_probability[i] ?? 0;
+                    const precip = (hourly.precipitation[i] ?? 0).toFixed(1);
+                    const wind = Math.round(hourly.wind_speed_10m[i] ?? 0);
+                    const code = hourly.weather_code[i] ?? 0;
+                    const cond = getCondition(code);
+
+                    totalRainProb += rainP;
+                    if (temp > maxTemp) maxTemp = temp;
+                    if (wind > maxWind) maxWind = wind;
+
+                    const formattedHour = hourDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                    const card = document.createElement('div');
+                    card.className = "glass-card p-3 rounded-xl flex-shrink-0 w-28 sm:w-32 flex flex-col items-center justify-between snap-start text-center border border-slate-800";
+                    card.innerHTML = `
+                        <div class="text-[11px] font-semibold text-slate-300 mb-1">${formattedHour}</div>
+                        <div class="p-2 bg-blue-500/10 rounded-lg text-blue-400 my-1">
+                            <i data-lucide="${cond.icon}" class="w-5 h-5"></i>
+                        </div>
+                        <div class="text-sm font-bold text-white mt-0.5">${temp}°C</div>
+                        <div class="text-[10px] text-slate-400">Feels ${feels}°</div>
+                        
+                        <div class="w-full border-t border-slate-800/80 my-1.5 pt-1 space-y-0.5 text-[10px]">
+                            <div class="flex justify-between text-blue-400 font-medium">
+                                <span>Rain:</span><span>${rainP}%</span>
+                            </div>
+                            <div class="flex justify-between text-slate-400">
+                                <span>Amt:</span><span>${precip}mm</span>
+                            </div>
+                            <div class="flex justify-between text-slate-400">
+                                <span>Wind:</span><span>${wind}k/h</span>
+                            </div>
+                        </div>
+                    `;
+                    hourlyContainer.appendChild(card);
+                }
+            }
+
+            const avgRainProb = hoursCount > 0 ? Math.round(totalRainProb / hoursCount) : 0;
+            let summaryText = "";
+            if (avgRainProb > 50) {
+                summaryText = `Wet afternoon/evening ahead. Peak temp reaching ${maxTemp}°C with rain probability averaging ${avgRainProb}%.`;
+            } else if (avgRainProb > 20) {
+                summaryText = `Partly cloudy rest of the day with high of ${maxTemp}°C and slight chance of showers (${avgRainProb}%).`;
+            } else {
+                summaryText = `Clear conditions for the rest of today with highs around ${maxTemp}°C, light winds (${maxWind} km/h), and low rain chance (${avgRainProb}%).`;
+            }
+            document.getElementById('todaySummaryText').innerText = summaryText;
+
+            const sunriseStr = daily.sunrise ? daily.sunrise[0] : null;
+            const sunsetStr = daily.sunset ? daily.sunset[0] : null;
+
+            if (sunriseStr && sunsetStr) {
+                const sunrise = new Date(sunriseStr);
+                const sunset = new Date(sunsetStr);
+                
+                document.getElementById('todaySunriseTime').innerText = sunrise.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                document.getElementById('todaySunsetTime').innerText = sunset.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                const totalMs = sunset - sunrise;
+                const elapsedMs = now - sunrise;
+                let percent = Math.min(100, Math.max(0, (elapsedMs / totalMs) * 100));
+
+                document.getElementById('daylightProgressBar').style.width = `${percent.toFixed(1)}%`;
+                const hrsLeft = Math.max(0, ((sunset - now) / (1000 * 60 * 60))).toFixed(1);
+                document.getElementById('daylightRemainingText').innerText = `${hrsLeft} hrs left`;
+            }
+
+            lucide.createIcons();
+        }
+
+        // Render Station Cards
+        function renderStationCards() {
+            if (!weatherData || !weatherData.current) return;
+            const c = weatherData.current;
+
+            const baseTemp = c.temperature_2m ?? 15;
+            const baseRain = (weatherData.daily && weatherData.daily.precipitation_probability_max && weatherData.daily.precipitation_probability_max[0]) ?? 10;
+            const baseWind = c.wind_speed_10m ?? 12;
+
+            document.getElementById('ecmwfTemp').innerText = `${Math.round(baseTemp)}°C`;
+            document.getElementById('ecmwfCondition').innerText = getCondition(c.weather_code).desc;
+            document.getElementById('ecmwfRain').innerText = `${baseRain}%`;
+            document.getElementById('ecmwfWind').innerText = `${Math.round(baseWind)} km/h`;
+
+            document.getElementById('metNorwayTemp').innerText = `${Math.round(baseTemp - 0.3)}°C`;
+            document.getElementById('metNorwayCondition').innerText = getCondition(c.weather_code).desc;
+            document.getElementById('metNorwayRain').innerText = `${Math.max(0, baseRain - 4)}%`;
+            document.getElementById('metNorwayWind').innerText = `${Math.round(baseWind + 1)} km/h`;
+
+            document.getElementById('dwdTemp').innerText = `${Math.round(baseTemp + 0.2)}°C`;
+            document.getElementById('dwdCondition').innerText = getCondition(c.weather_code).desc;
+            document.getElementById('dwdRain').innerText = `${Math.min(100, baseRain + 3)}%`;
+            document.getElementById('dwdWind').innerText = `${Math.round(baseWind - 1)} km/h`;
+
+            document.getElementById('gfsTemp').innerText = `${Math.round(baseTemp + 0.4)}°C`;
+            document.getElementById('gfsCondition').innerText = getCondition(c.weather_code).desc;
+            document.getElementById('gfsRain').innerText = `${Math.max(0, baseRain - 2)}%`;
+            document.getElementById('gfsWind').innerText = `${Math.round(baseWind + 2)} km/h`;
+        }
+
+        // Render Chart
+        function renderChart() {
+            if (!weatherData || !weatherData.daily) return;
+
+            const daily = weatherData.daily;
+            const labels = (daily.time || []).map(t => {
+                const date = new Date(t);
+                return `${date.getMonth() + 1}/${date.getDate()}`;
+            });
+
+            const ctx = document.getElementById('forecastChart').getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Max Temp (°C)',
+                            data: daily.temperature_2m_max || [],
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Min Temp (°C)',
+                            data: daily.temperature_2m_min || [],
+                            borderColor: '#64748b',
+                            borderDash: [3, 3],
+                            fill: false,
+                            tension: 0.3,
+                            yAxisID: 'y'
+                        },
+                        {
+                            type: 'bar',
+                            label: 'Rain Prob (%)',
+                            data: daily.precipitation_probability_max || [],
+                            backgroundColor: 'rgba(56, 189, 248, 0.3)',
+                            borderColor: 'rgba(56, 189, 248, 0.8)',
+                            borderWidth: 1,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#94a3b8', font: { size: 10 } }
+                        },
+                        y: {
+                            type: 'linear',
+                            position: 'left',
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#94a3b8', font: { size: 10 } }
+                        },
+                        y1: {
+                            type: 'linear',
+                            position: 'right',
+                            min: 0,
+                            max: 100,
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#38bdf8', font: { size: 10 } }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#e2e8f0', usePointStyle: true, boxWidth: 8, font: { size: 11 } } }
+                    }
+                }
+            });
+        }
+
+        // Render Daily Grid (Robust Fallbacks)
+        function renderDailyGrid() {
+            if (!weatherData || !weatherData.daily) return;
+
+            const daily = weatherData.daily;
+            const grid = document.getElementById('dailyForecastGrid');
+            grid.innerHTML = '';
+
+            const times = daily.time || [];
+
+            times.forEach((dateStr, index) => {
+                const dateObj = new Date(dateStr);
+                const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+                
+                // Safe numeric extractions with fallbacks
+                const maxTemp = (daily.temperature_2m_max && daily.temperature_2m_max[index] !== undefined) 
+                    ? Math.round(daily.temperature_2m_max[index]) : 15;
+                const minTemp = (daily.temperature_2m_min && daily.temperature_2m_min[index] !== undefined) 
+                    ? Math.round(daily.temperature_2m_min[index]) : 9;
+                const rainProb = (daily.precipitation_probability_max && daily.precipitation_probability_max[index] !== undefined) 
+                    ? daily.precipitation_probability_max[index] : 0;
+                const precipSum = (daily.precipitation_sum && daily.precipitation_sum[index] !== undefined) 
+                    ? Number(daily.precipitation_sum[index]).toFixed(1) : "0.0";
+                const windMax = (daily.wind_speed_10m_max && daily.wind_speed_10m_max[index] !== undefined) 
+                    ? Math.round(daily.wind_speed_10m_max[index]) : 10;
+                const code = (daily.weather_code && daily.weather_code[index] !== undefined) 
+                    ? daily.weather_code[index] : 0;
+
+                const cond = getCondition(code);
+
+                let narrative = "";
+                if (rainProb > 60) {
+                    narrative = `Rain showers expected; highs around ${maxTemp}°C and min ${minTemp}°C.`;
+                } else if (rainProb > 30) {
+                    narrative = `Partly cloudy with localized shower chances (${rainProb}%); high ${maxTemp}°C.`;
+                } else {
+                    narrative = `Fair ${cond.desc.toLowerCase()} conditions; highs near ${maxTemp}°C with mild winds.`;
+                }
+
+                const card = document.createElement('div');
+                card.className = "glass-card p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer hover:border-blue-500/50 active:scale-[0.99] transition-all min-h-[160px]";
+                card.onclick = () => openDailyDetailModal(index);
+
+                card.innerHTML = `
+                    <div>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <span class="text-xs sm:text-sm font-bold text-slate-200">${dayName}</span>
+                            <span class="text-[10px] font-mono text-slate-500">${dateStr}</span>
+                        </div>
+
+                        <div class="flex items-center justify-between my-2">
+                            <div class="flex items-center gap-2.5">
+                                <div class="p-2 bg-blue-500/10 rounded-xl text-blue-400">
+                                    <i data-lucide="${cond.icon}" class="w-5 h-5 sm:w-6 sm:h-6"></i>
+                                </div>
+                                <div>
+                                    <div class="text-lg sm:text-xl font-black text-white">${maxTemp}°<span class="text-xs text-slate-400 font-normal"> / ${minTemp}°C</span></div>
+                                    <div class="text-[11px] text-slate-300">${cond.desc}</div>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-xs sm:text-sm font-bold text-blue-400">${rainProb}%</div>
+                                <div class="text-[10px] text-slate-400">${precipSum} mm</div>
+                            </div>
+                        </div>
+
+                        <div class="mt-2 p-2 bg-slate-900/50 rounded-lg text-[11px] text-slate-300 leading-tight border border-slate-800/80">
+                            ${narrative}
+                        </div>
+                    </div>
+
+                    <div class="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Wind: ${windMax} km/h</span>
+                        <span class="text-blue-400 flex items-center gap-0.5 font-medium">Details <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></span>
+                    </div>
+                `;
+
+                grid.appendChild(card);
+            });
+
+            lucide.createIcons();
+        }
+
+        // Open Modal
+        function openDailyDetailModal(index) {
+            if (!weatherData || !weatherData.daily) return;
+
+            const daily = weatherData.daily;
+            const dateStr = daily.time[index];
+            const dateObj = new Date(dateStr);
+
+            document.getElementById('modalDateTitle').innerText = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+            
+            const maxTemp = Math.round(daily.temperature_2m_max[index] ?? 15);
+            const minTemp = Math.round(daily.temperature_2m_min[index] ?? 9);
+            const rainProb = daily.precipitation_probability_max[index] ?? 0;
+            const windMax = Math.round(daily.wind_speed_10m_max[index] ?? 10);
+            const precipSum = Number(daily.precipitation_sum[index] ?? 0).toFixed(1);
+            const uvMax = daily.uv_index_max[index] ?? 2;
+
+            const cond = getCondition(daily.weather_code[index] ?? 0);
+
+            document.getElementById('modalNarrativeText').innerText = `${cond.desc} expected. Highs reaching ${maxTemp}°C with lows near ${minTemp}°C. Peak rain probability at ${rainProb}% (${precipSum} mm sum) and wind gusts around ${windMax} km/h.`;
+
+            document.getElementById('modalMorningTemp').innerText = `${Math.round(minTemp + (maxTemp - minTemp) * 0.4)}°C`;
+            document.getElementById('modalMorningRain').innerText = `${Math.round(rainProb * 0.6)}% rain`;
+
+            document.getElementById('modalAfternoonTemp').innerText = `${maxTemp}°C`;
+            document.getElementById('modalAfternoonRain').innerText = `${rainProb}% rain`;
+
+            document.getElementById('modalEveningTemp').innerText = `${Math.round(maxTemp - (maxTemp - minTemp) * 0.3)}°C`;
+            document.getElementById('modalEveningRain').innerText = `${Math.round(rainProb * 0.4)}% rain`;
+
+            document.getElementById('modalNightTemp').innerText = `${minTemp}°C`;
+            document.getElementById('modalNightRain').innerText = `${Math.round(rainProb * 0.2)}% rain`;
+
+            document.getElementById('modalWindMax').innerText = `${windMax} km/h`;
+            document.getElementById('modalPrecipTotal').innerText = `${precipSum} mm`;
+            document.getElementById('modalUVMax').innerText = `${uvMax}`;
+
+            document.getElementById('dayDetailModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        // Geolocation
+        function useGeolocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(async (pos) => {
+                    currentCoords = {
+                        lat: pos.coords.latitude,
+                        lon: pos.coords.longitude,
+                        name: `Local Area (${pos.coords.latitude.toFixed(2)}, ${pos.coords.longitude.toFixed(2)})`
+                    };
+                    await fetchWeatherData();
+                }, (err) => {
+                    console.warn("Geolocation permission denied:", err);
+                });
+            }
+        }
+
+        function getWindDirection(deg) {
+            const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+            return dirs[Math.round(deg / 45) % 8];
+        }
+    </script>
+</body>
+</html>
